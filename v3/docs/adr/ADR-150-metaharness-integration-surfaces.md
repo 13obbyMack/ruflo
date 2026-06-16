@@ -29,6 +29,19 @@ Three signals make this the right time to commit a broader integration:
 | Both packages MIT-licensed, same maintainer as ruflo | npm registry | HIGH |
 | Existing benchmark proves `@metaharness/router` native backend loads on the test host: `mh_native_available: true` | `docs/benchmarks/runs/router-4way-seed99-2026-06-15T14-12-40Z.json` | HIGH |
 
+## Architectural Constraint (load-bearing invariant)
+
+**MetaHarness may augment ruflo. MetaHarness must never become a required runtime dependency for core orchestration, memory, routing, MCP dispatch, agent execution, or federation.**
+
+Every integration in this ADR, and every future ADR that extends it, must satisfy:
+
+1. **Removable**: ruflo's `npm ls` with all `@metaharness/*` packages removed must still produce a working CLI. The triple-gate pattern used for `@metaharness/router` (env flag + artifact + import success) is the reference implementation.
+2. **Optional in `package.json`**: `@metaharness/*` packages MUST appear in `optionalDependencies` or `peerDependencies` (optional), never in `dependencies`.
+3. **Graceful degradation**: every code path that imports a `@metaharness/*` symbol must catch `MODULE_NOT_FOUND` and fall back to a built-in path (or a clearly-degraded but functional state).
+4. **CI coverage of the absent path**: at least one CI job must run `--ignore-optional` (or equivalent) and assert ruflo still passes its smoke contract. This is the only structural defense against accidentally promoting an optional dep to required.
+
+The intent of this constraint is to prevent ruflo from becoming a hidden second orchestration framework wrapped around its sibling's runtime. Reviewer's framing: *"Ruflo remains operational if every MetaHarness package is removed."* That sentence is now part of the API surface contract — any PR that breaks it is a breaking change requiring its own ADR.
+
 ## Decision
 
 Adopt MetaHarness as ruflo's downstream sibling tool, surfaced through three integration channels that match its three distinct contributions:
@@ -64,11 +77,27 @@ Semver: MINOR — additive plugin, additive CI gates, additive MCP tools. No bre
 
 **Phase 2 — Expansion (1–4 weeks, one or two MINOR releases).**
 - `npx ruflo eject` command wrapping `metaharness --from-existing ./` for one-shot harness extraction (attribution preserved via the `<!-- ruflo-attribution-block -->` convention).
-- `SelfEvolvingRouter` (from `@metaharness/kernel`) parallel-logged alongside the Thompson bandit in `model-router.ts` for two weeks; promote to default only if disagreement < 5% or quality improvement > 2%.
+- `SelfEvolvingRouter` (from `@metaharness/kernel`) parallel-logged alongside the Thompson bandit in `model-router.ts` for two weeks. **Promotion criteria (AND, not OR — must satisfy all three):**
+  1. **Quality**: `qualityScore` improvement > 2% (where `qualityScore` is the existing per-task verdict-weighted reward used by the bandit)
+  2. **Cost**: `usdPerDecision` increase < 1% (no expensive regressions hiding behind quality wins)
+  3. **Latency**: p95 routing-decision latency increase < 5%
+  Each metric measured over an identical workload between bandit-only and SelfEvolvingRouter-only periods, separated by a 24h washout window. Failing any one criterion blocks promotion; the bandit stays primary. This tightening is deliberate — the "OR" form would let quality gains mask cost or latency regressions, which is the exact failure mode ADR-149's Pareto framing was built to prevent.
 - Harness entries in the ruflo plugin registry — accept `type: 'harness'` in `discovery.ts`; surface via `npx ruflo plugins list --type harness`.
 - 13th background worker `oia-audit` that runs `buildOiaManifest()` + `buildThreatModel()` + `scanMcp()` on a schedule and stores results in the `metaharness-audit` memory namespace.
 
 Each Phase-2 item is independently scoped and can ship as separate MINOR releases.
+
+**Phase 3 — Harness Intelligence Layer (future, scope-only — separate ADR per item).**
+
+A class of capability that exists nowhere else in the agent-framework space, made possible by `buildGenomeReport()` + `buildRepoScorecard()` + `buildRegistryEntry()`'s shared schema:
+
+- **Genome similarity search** — given two harnesses (or one harness + a candidate repo), compute a similarity vector across the 7 genome sections + scorecard dimensions; surface the closest match in the registry.
+- **Harness recommendation engine** — given a repo + a user description, recommend (a) the closest existing harness in the registry, (b) the closest template, and (c) the minimum delta to fork from either.
+- **Fleet-wide architecture drift detection** — for organisations running multiple harnesses, track genome-section drift over time; alert when a harness diverges from its template lineage beyond a threshold.
+- **Cross-harness capability graph** — `compare <a> <b>` already exists in `harness` CLI; lift it into a fleet-aware diff that answers "which harness in our fleet has the closest capability set to this task?".
+- **Plugin compatibility analysis** — given a `plugins/X/` and a target harness, predict whether the plugin's `allowed-tools` requirements are satisfied by the harness's MCP server declarations.
+
+These are scope-only in this ADR. Each item gets its own ADR before implementation. They are listed here so the architectural constraint (above) covers them up front — the Harness Intelligence Layer must also satisfy the four removable/optional/graceful/CI-coverage rules.
 
 ## Consequences
 
@@ -115,6 +144,7 @@ Rejected. Touching the MCP dispatch core affects all 314 tools and is too high-b
 - Should the Phase-1 plugin's `harness-mint` skill require explicit user confirmation in the Claude Code UI before writing any files? Lean yes — destructive-action-confirmation matches ruflo's "executing actions with care" principle.
 - Should the seed-corpus retraining cadence be ad-hoc (Phase-1) or scheduled (e.g., monthly cron in a Phase-2 follow-up)? Defer to Phase-2 once we see the trajectory volume.
 - Does the `oia-audit` background worker (Phase 2) belong in `ruflo-loop-workers` or in `ruflo-metaharness`? Probably the latter, since the audit output is MetaHarness-specific.
+- How does the architectural constraint's CI gate (the `--ignore-optional` smoke run) interact with the existing `all-plugins-smoke.yml` workflow? Probably a new sibling workflow `no-metaharness-smoke.yml` that re-runs the same matrix with `--ignore-optional`; lighter than adding a second axis to the existing matrix.
 
 ## References
 
