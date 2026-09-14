@@ -92,6 +92,7 @@ v3/@claude-flow/hooks/src/__tests__/guidance-provider.test.ts
 v3/@claude-flow/hooks/src/__tests__/reasoningbank.test.ts
 v3/@claude-flow/memory/src/agentdb-backend.test.ts
 v3/@claude-flow/memory/src/agentdb-retrieval-guard.test.ts
+v3/@claude-flow/memory/src/consolidator-embedding-benchmark.test.ts
 v3/@claude-flow/memory/src/consolidator.test.ts
 v3/@claude-flow/memory/src/controller-registry.test.ts
 v3/@claude-flow/memory/src/database-provider.test.ts
@@ -121,3 +122,8 @@ v3/plugins/quantum-optimizer/tests/mcp-tools.test.ts
 
 # ruflo-x-gateway: node:test suite with its own deps (nostr-tools, ws, MCP SDK) — run via `npm test` in plugins/ruflo-x-gateway; root vitest cannot resolve them (same pattern as plugins/ruflo-adr)
 plugins/ruflo-x-gateway/test/gateway.test.mjs
+plugins/ruflo-x-gateway/test/oauth.test.mjs
+
+# ruflo-chatgpt-federation: same pattern — plugin-local deps (jose, nostr-tools/pure) not resolvable from root vitest
+plugins/ruflo-chatgpt-federation/test/oauth.test.mjs
+plugins/ruflo-chatgpt-federation/test/publisher.test.mjs
