@@ -166,7 +166,21 @@ export const agentdbPatternStore: MCPTool = {
 
       const bridge = await getBridge();
       const result = await bridge.bridgeStorePattern({ pattern, type, confidence });
-      if (result) return result;
+      if (result) {
+        // #3288: `controller: 'reasoningBank'` is the ONLY label that means
+        // the healthy path ran. Every other label bridgeStorePattern can
+        // return (`bridge-fallback` today; more may be added later) is a
+        // degraded write that still reports {success: true} — flag it at
+        // this one boundary instead of chasing each fallback label
+        // individually, so a new label can't silently reopen this gap.
+        if (result.controller === 'reasoningBank') return result;
+        return {
+          ...result,
+          degraded: true,
+          reason: `reasoningBank-unavailable:${result.controller}`,
+          note: `ReasoningBank controller unavailable (controller=${result.controller}). Pattern persisted via the fallback path. Run \`agentdb_health\` to inspect controller registration.`,
+        };
+      }
 
       // ADR-093 F4: when the ReasoningBank controller registry returns
       // null (the cause of audit-reported "AgentDB bridge not available"
@@ -186,6 +200,12 @@ export const agentdbPatternStore: MCPTool = {
         });
         return {
           success: true,
+          // #3288: a caller must not have to already know to distrust a
+          // "successful" response — degraded:true is the structural signal
+          // (matching agentbbs-tools.ts's degradedResult() convention),
+          // `note` stays for the human-readable detail.
+          degraded: true,
+          reason: 'reasoningBank-unavailable:registry-null',
           patternId,
           controller: 'memory-store-fallback',
           note: 'ReasoningBank controller registry unavailable. Pattern persisted via memory_store. Run `agentdb_health` to inspect controller registration.',
@@ -230,7 +250,19 @@ export const agentdbPatternSearch: MCPTool = {
       const bridge = await getBridge();
       const result = await bridge.bridgeSearchPatterns({ query, topK, minConfidence });
       if (result && Array.isArray(result.results) && result.results.length > 0) {
-        return result;
+        // #3288: `controller: 'reasoningBank'` is the only label meaning the
+        // healthy path ran and actually found results. Any other label
+        // (`bridge-fallback` today; more may be added later) is a degraded
+        // response even though it has results — flag it here, since this
+        // early return bypasses the tier1/tier2 fallback block below
+        // entirely (and its degraded:true) whenever there ARE results.
+        if (result.controller === 'reasoningBank') return result;
+        return {
+          ...result,
+          degraded: true,
+          reason: `reasoningBank-unavailable:${result.controller}`,
+          note: `ReasoningBank controller unavailable (controller=${result.controller}); results returned via the fallback path. Run \`agentdb_health\` to inspect controller registration.`,
+        };
       }
 
       // #1889 — symmetric fallback. pattern-store writes to the `pattern`
@@ -310,8 +342,13 @@ export const agentdbPatternSearch: MCPTool = {
         // round-trip sees both ends agree. The store reports
         // `memory-store-fallback`; we use the same name + a `tier` field
         // to expose which sub-strategy fired.
+        // #3288: degraded:true is the structural signal a caller can check
+        // without already knowing to distrust an apparently-successful
+        // response — matches agentbbs-tools.ts's degradedResult() convention.
         return {
           results,
+          degraded: true,
+          reason: result ? `reasoningBank-empty:${result.controller ?? 'unknown'}` : 'reasoningBank-unavailable:registry-null',
           controller: 'memory-store-fallback',
           tier,
           note: result
